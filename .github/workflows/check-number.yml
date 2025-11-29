@@ -55,10 +55,7 @@ jobs:
       - name: Notify Slack (on change)
         if: hashFiles('changed.flag') != ''
         run: |
-          TEXT="番号が更新されました。\n
-*診療中:* $CURRENT\n
-*ご不在:* $ABSENT\n
-*次にお取りできる番号:* $NEXT"
+          TEXT="番号が更新されました。\n*診療中:* $CURRENT\n*ご不在:* $ABSENT\n*次にお取りできる番号:* $NEXT"
 
           curl -X POST \
             -H 'Content-type: application/json' \
