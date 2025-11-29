@@ -1,0 +1,75 @@
+name: Check DoctorQube Number
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # 5分ごと
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch page
+        run: |
+          curl -s https://ssc11.doctorqube.com/morimoto-kids/ > page.html
+
+      - name: Extract numbers from HTML
+        run: |
+          # HTML → テキスト
+          TEXT=$(sed 's/<[^>]*>//g' page.html)
+
+          # 診療中（17）
+          CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[0-9]+' | head -n 1)
+
+          # ご不在の方（6, 10, 12,...）
+          ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[0-9,、\s]+' | tr -d '、')
+
+          # 次にお取りできる番号（29）
+          NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[0-9]+' | head -n 1)
+
+          echo "CURRENT=$CURRENT" >> $GITHUB_ENV
+          echo "ABSENT=$ABSENT" >> $GITHUB_ENV
+          echo "NEXT=$NEXT" >> $GITHUB_ENV
+
+      - name: Load previous state
+        run: |
+          if [ -f last_state.json ]; then
+            PREV=$(cat last_state.json)
+          else
+            PREV="{}"
+          fi
+          echo "PREV_STATE=$PREV" >> $GITHUB_ENV
+
+      - name: Compare state
+        run: |
+          NEW="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
+          echo "$NEW" > new_state.json
+
+          if [ ! -f last_state.json ] || [ "$(cat last_state.json)" != "$NEW" ]; then
+            echo "changed" > changed.flag
+          fi
+
+      - name: Notify Slack (on change)
+        if: hashFiles('changed.flag') != ''
+        run: |
+          TEXT="番号が更新されました。\n
+*診療中:* $CURRENT\n
+*ご不在:* $ABSENT\n
+*次にお取りできる番号:* $NEXT"
+
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"$TEXT\"}" \
+            "${{ secrets.SLACK_WEBHOOK_URL }}"
+
+      - name: Save new state
+        run: |
+          mv new_state.json last_state.json
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add last_state.json
+          git commit -m "Update state" || true
+          git push
