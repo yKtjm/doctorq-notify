@@ -16,19 +16,28 @@ jobs:
         run: |
           curl -s https://ssc11.doctorqube.com/morimoto-kids/ > page.html
 
-      - name: Extract numbers from HTML
+      - name: Extract numbers from HTML (with Zenkaku → Hankaku conversion)
         run: |
+          # 全角 → 半角変換関数
+          z2h() {
+            echo "$1" | tr '０１２３４５６７８９' '0123456789'
+          }
+
           # HTML → テキスト
           TEXT=$(sed 's/<[^>]*>//g' page.html)
 
           # 診療中（17）
-          CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[0-9]+' | head -n 1)
+          RAW_CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[０-９]+' | head -n 1)
+          CURRENT=$(z2h "$RAW_CURRENT")
 
           # ご不在の方（6, 10, 12,...）
-          ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[0-9,、\s]+' | tr -d '、')
+          RAW_ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[０-９,、\s]+' | head -n 1)
+          # 全角 → 半角 & 和文読点「、」→ カンマへ統一
+          ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
 
           # 次にお取りできる番号（29）
-          NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[0-9]+' | head -n 1)
+          RAW_NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[０-９]+' | head -n 1)
+          NEXT=$(z2h "$RAW_NEXT")
 
           echo "CURRENT=$CURRENT" >> $GITHUB_ENV
           echo "ABSENT=$ABSENT" >> $GITHUB_ENV
