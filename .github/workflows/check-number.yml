@@ -78,7 +78,7 @@ jobs:
           echo "[ENV] NEXT=${NEXT}"
 
       - name: Save debug artifacts (page.html, page.txt)
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: debug-pages
           path: |
