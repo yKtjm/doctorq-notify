@@ -106,7 +106,7 @@ jobs:
 
             # 複数マッチを箇条書き形式
             format_list() {
-              echo "$1" | sed '/^$/d' | sed 's/^/・/g'
+              echo "$1" | sed '/^$/d' | sed 's/^/  ・/g'
             }
 
             CURRENT_FMT=$(format_list "$CURRENT")
