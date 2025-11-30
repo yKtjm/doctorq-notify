@@ -36,7 +36,7 @@ jobs:
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
 
-            # ルールを JSON から取得
+            # 正規表現を JSON から取得（PCRE）
             RULE_CURRENT=$(echo "$SITE" | jq -r '.rules.current')
             RULE_ABSENT=$(echo "$SITE" | jq -r '.rules.absent')
             RULE_NEXT=$(echo "$SITE" | jq -r '.rules.next')
@@ -46,21 +46,20 @@ jobs:
             # HTML取得
             curl -s "$URL" > "pages/${NAME}.html"
             TEXT=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
-            echo "$TEXT" > "pages/${NAME}.txt"
 
-            # 抽出：ルールは JSON から読み込む
-            RAW_CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | head -n 1 | sed -E "s/$RULE_CURRENT/\\1/" || true)
+            # ---- 抽出（sed は使わず PCRE のみ） ----
+            RAW_CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | head -n 1 | perl -pe "s/$RULE_CURRENT/\$1/" || true)
             CURRENT=$(z2h "$RAW_CURRENT" | tr -d ' ')
 
-            RAW_ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | head -n 1 | sed -E "s/$RULE_ABSENT/\\1/" || true)
+            RAW_ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | head -n 1 | perl -pe "s/$RULE_ABSENT/\$1/" || true)
             ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
 
-            RAW_NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | head -n 1 | sed -E "s/$RULE_NEXT/\\1/" || true)
+            RAW_NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | head -n 1 | perl -pe "s/$RULE_NEXT/\$1/" || true)
             NEXT=$(z2h "$RAW_NEXT" | tr -d ' ')
 
             echo "[DEBUG][$NAME] CURRENT='$CURRENT' ABSENT='$ABSENT' NEXT='$NEXT'"
 
-            # ---- 差分比較：デシリアライズで比較 ----
+            # ---- 差分比較：JSON をソートして比較 ----
             STATE_FILE="results/${NAME}_state.json"
             NEW_STATE_FILE="results/${NAME}_state.json.new"
             NEW_STATE="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
@@ -69,7 +68,8 @@ jobs:
 
             CHANGE_FLAG="results/${NAME}_changed.flag"
 
-            if [ ! -f "$STATE_FILE" ] || [ "$(jq -S . "$STATE_FILE")" != "$(jq -S . "$NEW_STATE_FILE")" ]; then
+            if [ ! -f "$STATE_FILE" ] || \
+               [ "$(jq -S . "$STATE_FILE")" != "$(jq -S . "$NEW_STATE_FILE")" ]; then
               echo "changed" > "$CHANGE_FLAG"
             fi
 
@@ -96,7 +96,7 @@ jobs:
               continue
             fi
 
-            # Slack チャンネル名
+            # ---- Slack チャンネル名 ----
             CHANNEL="#${NAME}"
 
             MESSAGE="*${NAME}*\n番号が更新されました\n・診療中: ${CURRENT}\n・ご不在: ${ABSENT}\n・次番号: ${NEXT}"
