@@ -1,0 +1,11 @@
+[
+  {
+    "name": "morimoto-kids",
+    "url": "https://ssc11.doctorqube.com/morimoto-kids/",
+    "rules": {
+      "current": "診療中\\s*([０-９0-9]+)",
+      "absent": "ご不在の方\\s*([０-９0-9,、\\s]+)",
+      "next": "次にお取りできる番号\\s*([０-９0-9]+)"
+    }
+  }
+]
