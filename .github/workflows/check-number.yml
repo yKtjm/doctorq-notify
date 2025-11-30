@@ -1,4 +1,4 @@
-name: Check DoctorQube Number (Multi-site Debug)
+name: Check DoctorQube Number (Multi-site Safe)
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
           echo "[DEBUG] Sites loaded:"
           cat sites_list.txt
 
-      - name: Process each site
+      - name: Process each site safely
         run: |
           set -euo pipefail
 
@@ -43,12 +43,27 @@ jobs:
             TEXT=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
             echo "$TEXT" > "pages/${NAME}.txt"
 
-            # ---- 複数マッチ抽出 ----
-            CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | perl -pe "s/$RULE_CURRENT/\$1/" | while read -r v; do z2h "$v"; done)
-            ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | perl -pe "s/$RULE_ABSENT/\$1/" | while read -r v; do z2h "$v" | tr '、' ','; done)
-            NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | perl -pe "s/$RULE_NEXT/\$1/" | while read -r v; do z2h "$v"; done)
+            # ---- 複数マッチ抽出（安全版） ----
+            extract_matches() {
+              local RULE="$1"
+              local INPUT="$2"
+              local OUT=""
+              MATCHES=$(echo "$INPUT" | grep -oP "$RULE" || true)
+              if [ -n "$MATCHES" ]; then
+                while read -r v; do
+                  VAL=$(echo "$v" | perl -pe "s/$RULE/\$1/")
+                  VAL=$(z2h "$VAL")
+                  OUT+="$VAL"$'\n'
+                done <<< "$MATCHES"
+              fi
+              echo "$OUT"
+            }
 
-            # デバッグ出力（途中経過）
+            CURRENT=$(extract_matches "$RULE_CURRENT" "$TEXT")
+            ABSENT=$(extract_matches "$RULE_ABSENT" "$TEXT" | tr '、' ',')
+            NEXT=$(extract_matches "$RULE_NEXT" "$TEXT")
+
+            # デバッグ出力
             echo "[DEBUG][$NAME] CURRENT numbers:"
             echo "$CURRENT"
             echo "[DEBUG][$NAME] ABSENT numbers:"
@@ -89,7 +104,7 @@ jobs:
               continue
             fi
 
-            # Slack 用に複数マッチを箇条書き形式に変換
+            # 複数マッチを箇条書き形式
             format_list() {
               echo "$1" | sed '/^$/d' | sed 's/^/・/g'
             }
