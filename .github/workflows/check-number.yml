@@ -1,7 +1,7 @@
 name: Check DoctorQube Number (Multi-site Debug)
 
 on:
-  workflow_dispatch:   # 手動デバッグ用
+  workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
 
@@ -10,121 +10,104 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
-      - name: Install jq
-        run: sudo apt-get install -y jq
-
-      - name: Load sites.json (base64 encode)
+      - name: Read site list
+        id: read_sites
         run: |
-          echo $(cat sites.json)
-          SITES_B64=$(base64 -w 0 sites.json)
-          echo "SITES_B64=$SITES_B64" >> $GITHUB_ENV
+          jq -c '.sites[]' sites.json > sites_list.txt
+          echo "[DEBUG] Sites loaded:"
+          cat sites_list.txt
 
-      - name: Process all sites
+      - name: Process each site
         run: |
-          echo "$SITES_B64" | base64 --decode | jq -c '.[]' | while read SITE; do
+          set -euo pipefail
+
+          # 全角 → 半角変換
+          z2h() {
+            echo "$1" | tr '０１２３４５６７８９' '0123456789'
+          }
+
+          mkdir -p results
+          mkdir -p pages
+
+          while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
+            echo "[INFO] Processing $NAME ($URL)"
 
-            # Slack通知はチャンネルではなく Payload 上で制御（WebhookURLは共通）
-            SLACK_CHANNEL="#${NAME}"
+            # HTML取得
+            curl -s "$URL" > "pages/${NAME}.html"
+            TEXT=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
+            echo "$TEXT" > "pages/${NAME}.txt"
 
-            echo "=================="
-            echo " Processing site: $NAME"
-            echo " URL: $URL"
-            echo "=================="
-
-            curl -s "$URL" > page.html
-            ls -l page.html
-
-            echo "[DEBUG] Saved page.html (first 200 lines):"
-            head -n 200 page.html || true
-
-            # HTML → テキスト
-            TEXT=$(sed 's/<[^>]*>//g' page.html)
-            echo "$TEXT" > page.txt
-
-            echo "----- BEGIN DEBUG: page.txt (先頭200行) -----"
-            head -n 200 page.txt || true
-            echo "----- END DEBUG: page.txt -----"
-
-            echo
-            echo "----- DUMP: full TEXT (長い可能性あり) -----"
-            printf '%s\n' "$TEXT"
-            echo "----- END DUMP -----"
-            echo
-
-            # 全角→半角変換関数
-            z2h() {
-              echo "$1" | tr '０１２３４５６７８９' '0123456789'
-            }
-
-            # 抽出ルール
-            RULE_CURRENT=$(echo "$SITE" | jq -r '.rules.current')
-            RULE_ABSENT=$(echo "$SITE" | jq -r '.rules.absent')
-            RULE_NEXT=$(echo "$SITE" | jq -r '.rules.next')
-
-            # 抽出
-            RAW_CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | head -n 1 || true)
-            RAW_ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | head -n 1 || true)
-            RAW_NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | head -n 1 || true)
-
+            # 数値抽出（全角対応）
+            RAW_CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[０-９0-9]+' | head -n 1 || true)
             CURRENT=$(z2h "$RAW_CURRENT" | tr -d ' ')
+
+            RAW_ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[０-９0-9,、\s]+' | head -n 1 || true)
             ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
+
+            RAW_NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[０-９0-9]+' | head -n 1 || true)
             NEXT=$(z2h "$RAW_NEXT" | tr -d ' ')
 
-            echo "DEBUG_RAW_CURRENT: '$RAW_CURRENT'"
-            echo "DEBUG_CURRENT     : '$CURRENT'"
-            echo "DEBUG_RAW_ABSENT : '$RAW_ABSENT'"
-            echo "DEBUG_ABSENT     : '$ABSENT'"
-            echo "DEBUG_RAW_NEXT   : '$RAW_NEXT'"
-            echo "DEBUG_NEXT       : '$NEXT'"
+            echo "[DEBUG][$NAME] CURRENT='$CURRENT' ABSENT='$ABSENT' NEXT='$NEXT'"
 
-            # 状態ファイル名（URLをmd5でユニーク化）
-            STATE_FILE="state_$(echo -n "$URL" | md5sum | cut -d' ' -f1).json"
+            # 差分比較
+            STATE_FILE="results/${NAME}_state.json"
+            NEW_STATE="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
 
-            if [ -f "$STATE_FILE" ]; then
-              PREV=$(cat "$STATE_FILE")
-            else
-              PREV="{}"
+            CHANGE_FLAG="results/${NAME}_changed.flag"
+            if [ ! -f "$STATE_FILE" ] || [ "$(cat "$STATE_FILE")" != "$NEW_STATE" ]; then
+              echo "changed" > "$CHANGE_FLAG"
             fi
 
-            NEW="{\"current\":\"$CURRENT\",\"absent\":\"$ABSENT\",\"next\":\"$NEXT\"}"
+            echo "$NEW_STATE" > "${STATE_FILE}.new"
 
-            echo "PREVIOUS: $PREV"
-            echo "NEW     : $NEW"
+          done < sites_list.txt
 
-            if [ "$PREV" != "$NEW" ]; then
-              echo "CHANGE DETECTED for $NAME"
-              echo "$NEW" > "$STATE_FILE"
-
-              # Slack通知（名前をチャンネルとして送る）
-              TEXT_MSG="[${NAME}] 番号が更新されました。\n*診療中:* $CURRENT\n*ご不在:* $ABSENT\n*次にお取りできる番号:* $NEXT"
-
-              curl -X POST \
-                -H "Content-type: application/json" \
-                --data "{\"channel\":\"${SLACK_CHANNEL}\",\"text\":\"$TEXT_MSG\"}" \
-                "${{ secrets.SLACK_WEBHOOK_URL }}"
-            else
-              echo "NO CHANGE for $NAME"
-            fi
-
-            echo ""
-          done
-
-      - name: Save state files
+      - name: Notify Slack for changed sites
         run: |
+          while read SITE; do
+            NAME=$(echo "$SITE" | jq -r '.name')
+
+            CHANGE_FLAG="results/${NAME}_changed.flag"
+            if [ ! -f "$CHANGE_FLAG" ]; then
+              continue
+            fi
+
+            STATE_NEW="results/${NAME}_state.json.new"
+            CURRENT=$(jq -r '.current' "$STATE_NEW")
+            ABSENT=$(jq -r '.absent' "$STATE_NEW")
+            NEXT=$(jq -r '.next' "$STATE_NEW")
+
+            MESSAGE="*${NAME}*\n番号が更新されました\n・診療中: ${CURRENT}\n・ご不在: ${ABSENT}\n・次番号: ${NEXT}"
+
+            curl -X POST \
+              -H 'Content-type: application/json' \
+              --data "{\"text\":\"$MESSAGE\"}" \
+              "${{ secrets.SLACK_WEBHOOK_URL }}"
+
+          done < sites_list.txt
+
+      - name: Save new states
+        run: |
+          while read SITE; do
+            NAME=$(echo "$SITE" | jq -r '.name')
+            mv "results/${NAME}_state.json.new" "results/${NAME}_state.json"
+          done < sites_list.txt
+
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add state_*.json || true
+          git add results
           git commit -m "Update states" || true
-          git push
+          git push || true
 
       - name: Upload debug artifacts
         uses: actions/upload-artifact@v4
         with:
           name: debug-pages
           path: |
-            page.html
-            page.txt
+            pages/
+            results/
