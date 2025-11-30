@@ -122,7 +122,7 @@ jobs:
           git push
 
       - name: Upload debug artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: debug-pages
           path: |
