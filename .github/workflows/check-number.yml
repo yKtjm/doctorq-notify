@@ -17,6 +17,7 @@ jobs:
 
       - name: Load sites.json (base64 encode)
         run: |
+          echo $(cat sites.json)
           SITES_B64=$(base64 -w 0 sites.json)
           echo "SITES_B64=$SITES_B64" >> $GITHUB_ENV
 
