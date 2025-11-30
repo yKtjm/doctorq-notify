@@ -16,7 +16,7 @@ jobs:
       - name: Read site list
         id: read_sites
         run: |
-          jq -c '.sites[]' sites.json > sites_list.txt
+          jq -c '.[]' sites.json > sites_list.txt
           echo "[DEBUG] Sites loaded:"
           cat sites_list.txt
 
