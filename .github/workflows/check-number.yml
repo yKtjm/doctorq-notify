@@ -35,6 +35,12 @@ jobs:
           while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
+
+            # ルールを JSON から取得
+            RULE_CURRENT=$(echo "$SITE" | jq -r '.rules.current')
+            RULE_ABSENT=$(echo "$SITE" | jq -r '.rules.absent')
+            RULE_NEXT=$(echo "$SITE" | jq -r '.rules.next')
+
             echo "[INFO] Processing $NAME ($URL)"
 
             # HTML取得
@@ -42,28 +48,30 @@ jobs:
             TEXT=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
             echo "$TEXT" > "pages/${NAME}.txt"
 
-            # 数値抽出（全角対応）
-            RAW_CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[０-９0-9]+' | head -n 1 || true)
+            # 抽出：ルールは JSON から読み込む
+            RAW_CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | head -n 1 | sed -E "s/$RULE_CURRENT/\\1/" || true)
             CURRENT=$(z2h "$RAW_CURRENT" | tr -d ' ')
 
-            RAW_ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[０-９0-9,、\s]+' | head -n 1 || true)
+            RAW_ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | head -n 1 | sed -E "s/$RULE_ABSENT/\\1/" || true)
             ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
 
-            RAW_NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[０-９0-9]+' | head -n 1 || true)
+            RAW_NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | head -n 1 | sed -E "s/$RULE_NEXT/\\1/" || true)
             NEXT=$(z2h "$RAW_NEXT" | tr -d ' ')
 
             echo "[DEBUG][$NAME] CURRENT='$CURRENT' ABSENT='$ABSENT' NEXT='$NEXT'"
 
-            # 差分比較
+            # ---- 差分比較：デシリアライズで比較 ----
             STATE_FILE="results/${NAME}_state.json"
+            NEW_STATE_FILE="results/${NAME}_state.json.new"
             NEW_STATE="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
 
+            echo "$NEW_STATE" > "$NEW_STATE_FILE"
+
             CHANGE_FLAG="results/${NAME}_changed.flag"
-            if [ ! -f "$STATE_FILE" ] || [ "$(cat "$STATE_FILE")" != "$NEW_STATE" ]; then
+
+            if [ ! -f "$STATE_FILE" ] || [ "$(jq -S . "$STATE_FILE")" != "$(jq -S . "$NEW_STATE_FILE")" ]; then
               echo "changed" > "$CHANGE_FLAG"
             fi
-
-            echo "$NEW_STATE" > "${STATE_FILE}.new"
 
           done < sites_list.txt
 
@@ -82,11 +90,23 @@ jobs:
             ABSENT=$(jq -r '.absent' "$STATE_NEW")
             NEXT=$(jq -r '.next' "$STATE_NEW")
 
+            # ---- 全項目が空欄なら通知しない ----
+            if [ -z "$CURRENT" ] && [ -z "$ABSENT" ] && [ -z "$NEXT" ]; then
+              echo "[INFO] Skip Slack: all values empty for $NAME"
+              continue
+            fi
+
+            # Slack チャンネル名
+            CHANNEL="#${NAME}"
+
             MESSAGE="*${NAME}*\n番号が更新されました\n・診療中: ${CURRENT}\n・ご不在: ${ABSENT}\n・次番号: ${NEXT}"
 
             curl -X POST \
               -H 'Content-type: application/json' \
-              --data "{\"text\":\"$MESSAGE\"}" \
+              --data "{
+                \"channel\": \"${CHANNEL}\",
+                \"text\": \"${MESSAGE}\"
+              }" \
               "${{ secrets.SLACK_WEBHOOK_URL }}"
 
           done < sites_list.txt
