@@ -1,7 +1,7 @@
-name: Check DoctorQube Number (Debug)
+name: Check DoctorQube Numbers (Multi-site Debug)
 
 on:
-  workflow_dispatch:   # 手動実行でデバッグしやすくする
+  workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
 
@@ -12,108 +12,117 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Fetch page
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Load sites.json
+        id: load_sites
         run: |
-          curl -s https://ssc11.doctorqube.com/morimoto-kids/ > page.html
-          ls -l page.html
-          echo "[DEBUG] Saved page.html (first 200 lines):"
-          head -n 200 page.html || true
+          echo "SITES=$(cat sites.json)" >> $GITHUB_ENV
 
-      - name: Extract numbers from HTML (with Zenkaku → Hankaku conversion) and debug output
-        env:
-          GITHUB_ENV: ${{ github.env }}
+      - name: Process all sites
         run: |
-          set -euo pipefail
+          echo "$SITES" | jq -c '.[]' | while read SITE; do
+            NAME=$(echo "$SITE" | jq -r '.name')
+            URL=$(echo "$SITE" | jq -r '.url')
 
-          # 全角 → 半角変換関数
-          z2h() {
-            echo "$1" | tr '０１２３４５６７８９' '0123456789'
-          }
+            RULE_CURRENT=$(echo "$SITE" | jq -r '.rules.current')
+            RULE_ABSENT=$(echo "$SITE" | jq -r '.rules.absent')
+            RULE_NEXT=$(echo "$SITE" | jq -r '.rules.next')
 
-          # HTML → テキスト（タグ除去）
-          TEXT=$(sed 's/<[^>]*>//g' page.html)
-          # 保存してログ出力（アーティファクトとしてもアップロード）
-          echo "$TEXT" > page.txt
+            echo "=============================="
+            echo " Processing site: $NAME"
+            echo " URL: $URL"
+            echo "=============================="
 
-          echo "----- BEGIN DEBUG: page.txt (先頭200行) -----"
-          head -n 200 page.txt || true
-          echo "----- END DEBUG: page.txt -----"
+            curl -s "$URL" > page.html
 
-          # デバッグ向けに全文を出力（ログが大きくなりすぎる場合は縮める）
-          echo
-          echo "----- DUMP: full TEXT (警告: 長い場合あり) -----"
-          printf '%s\n' "$TEXT"
-          echo "----- END DUMP -----"
-          echo
+            echo "[DEBUG] Saved page.html (first 200 lines):"
+            head -n 200 page.html || true
 
-          # 診療中（RAW: 全角も含む）
-          RAW_CURRENT=$(echo "$TEXT" | grep -oP '診療中\s*\K[０-９０-９0-9]+' | head -n 1 || true)
-          CURRENT=$(z2h "$RAW_CURRENT" | tr -d ' ')
+            # HTML → テキスト
+            TEXT=$(sed 's/<[^>]*>//g' page.html)
+            echo "$TEXT" > page.txt
 
-          # ご不在の方（RAW: 全角カンマ・読点 等を含む場合あり）
-          RAW_ABSENT=$(echo "$TEXT" | grep -oP 'ご不在の方\s*\K[０-９０-９0-9,、\s]+' | head -n 1 || true)
-          ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
+            echo "----- BEGIN DEBUG: page.txt (先頭200行) -----"
+            head -n 200 page.txt || true
+            echo "----- END DEBUG: page.txt -----"
 
-          # 次にお取りできる番号（RAW）
-          RAW_NEXT=$(echo "$TEXT" | grep -oP '次にお取りできる番号\s*\K[０-９０-９0-9]+' | head -n 1 || true)
-          NEXT=$(z2h "$RAW_NEXT" | tr -d ' ')
+            echo
+            echo "----- DUMP: full TEXT (警告: 長い場合あり) -----"
+            printf '%s\n' "$TEXT"
+            echo "----- END DUMP -----"
+            echo
 
-          # 出力してログに表示（改行や空文字も分かるように表現）
-          echo "DEBUG_RAW_CURRENT: '$(printf "%s" "$RAW_CURRENT")'"
-          echo "DEBUG_CURRENT      : '$(printf "%s" "$CURRENT")'"
-          echo "DEBUG_RAW_ABSENT  : '$(printf "%s" "$RAW_ABSENT")'"
-          echo "DEBUG_ABSENT      : '$(printf "%s" "$ABSENT")'"
-          echo "DEBUG_RAW_NEXT    : '$(printf "%s" "$RAW_NEXT")'"
-          echo "DEBUG_NEXT        : '$(printf "%s" "$NEXT")'"
+            # 全角 → 半角変換関数
+            z2h() {
+              echo "$1" | tr '０１２３４５６７８９' '0123456789'
+            }
 
-          # 環境変数へセット（元のフローと互換）
-          echo "CURRENT=$CURRENT" >> $GITHUB_ENV
-          echo "ABSENT=$ABSENT" >> $GITHUB_ENV
-          echo "NEXT=$NEXT" >> $GITHUB_ENV
+            # 抽出
+            RAW_CURRENT=$(echo "$TEXT" | grep -oP "$RULE_CURRENT" | head -n 1 || true)
+            CURRENT=$(z2h "$RAW_CURRENT" | tr -d ' ')
 
-      - name: Show environment vars (check)
-        run: |
-          echo "[ENV] CURRENT=${CURRENT}"
-          echo "[ENV] ABSENT=${ABSENT}"
-          echo "[ENV] NEXT=${NEXT}"
+            RAW_ABSENT=$(echo "$TEXT" | grep -oP "$RULE_ABSENT" | head -n 1 || true)
+            ABSENT=$(z2h "$RAW_ABSENT" | tr '、' ',' | tr -d ' ')
 
-      - name: Save debug artifacts (page.html, page.txt)
+            RAW_NEXT=$(echo "$TEXT" | grep -oP "$RULE_NEXT" | head -n 1 || true)
+            NEXT=$(z2h "$RAW_NEXT" | tr -d ' ')
+
+            echo "DEBUG_RAW_CURRENT: '$(printf "%s" "$RAW_CURRENT")'"
+            echo "DEBUG_CURRENT     : '$(printf "%s" "$CURRENT")'"
+            echo "DEBUG_RAW_ABSENT  : '$(printf "%s" "$RAW_ABSENT")'"
+            echo "DEBUG_ABSENT      : '$(printf "%s" "$ABSENT")'"
+            echo "DEBUG_RAW_NEXT    : '$(printf "%s" "$RAW_NEXT")'"
+            echo "DEBUG_NEXT        : '$(printf "%s" "$NEXT")'"
+
+            # サイト別 state ファイル
+            STATE_FILE="state_${NAME}.json"
+
+            if [ -f "$STATE_FILE" ]; then
+              PREV=$(cat "$STATE_FILE")
+            else
+              PREV="{}"
+            fi
+
+            NEW="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
+
+            echo "PREVIOUS STATE = $PREV"
+            echo "NEW STATE      = $NEW"
+
+            if [ "$NEW" != "$PREV" ]; then
+              echo ">>> CHANGE DETECTED for $NAME"
+              echo "$NEW" > "$STATE_FILE"
+
+              # Slack通知（チャンネル名 = NAME）
+              TEXT_MSG="[$NAME] 番号が更新されました。\n*診療中:* $CURRENT\n*ご不在:* $ABSENT\n*次にお取りできる番号:* $NEXT"
+
+              curl -X POST \
+                -H "Content-type: application/json" \
+                --data "{\"channel\":\"$NAME\", \"text\":\"$TEXT_MSG\"}" \
+                "${{ secrets.SLACK_WEBHOOK_URL }}"
+            else
+              echo "No change for $NAME"
+            fi
+
+            # デバッグ用アーティファクトとして保存
+            mkdir -p artifacts/$NAME
+            cp page.html artifacts/$NAME/
+            cp page.txt  artifacts/$NAME/
+            echo "$NEW" > artifacts/$NAME/state.json
+
+          done
+
+      - name: Upload debug artifacts
         uses: actions/upload-artifact@v4
         with:
           name: debug-pages
-          path: |
-            page.html
-            page.txt
+          path: artifacts/
 
-      - name: Load previous state
+      - name: Commit updated states
         run: |
-          if [ -f last_state.json ]; then
-            PREV=$(cat last_state.json)
-          else
-            PREV="{}"
-          fi
-          echo "PREV_STATE=$PREV" >> $GITHUB_ENV
-
-      - name: Compare state
-        run: |
-          NEW="{\"current\": \"$CURRENT\", \"absent\": \"$ABSENT\", \"next\": \"$NEXT\"}"
-          echo "$NEW" > new_state.json
-
-          if [ ! -f last_state.json ] || [ "$(cat last_state.json)" != "$NEW" ]; then
-            echo "changed" > changed.flag
-          fi
-
-      - name: Notify Slack (on change)
-        if: hashFiles('changed.flag') != ''
-        run: |
-          TEXT="番号が更新されました。\n*診療中:* $CURRENT\n*ご不在:* $ABSENT\n*次にお取りできる番号:* $NEXT"
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"$TEXT\"}" "${{ secrets.SLACK_WEBHOOK_URL }}"
-
-      - name: Save new state
-        run: |
-          mv new_state.json last_state.json
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add last_state.json
-          git commit -m "Update state" || true
+          git add state_*.json || true
+          git commit -m "Update state files" || true
           git push
