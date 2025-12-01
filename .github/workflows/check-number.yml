@@ -114,7 +114,7 @@ jobs:
             NEXT_FMT=$(format_list "$NEXT")
 
             CHANNEL="#${NAME}"
-            MESSAGE="*${NAME}*\n番号が更新されました\n・診療中:\n${CURRENT_FMT}\n・ご不在:\n${ABSENT_FMT}\n・次番号:\n${NEXT_FMT}"
+            MESSAGE="*${NAME}*\n番号が更新されました\n・診療中:\n${CURRENT_FMT}\n・ご不在:\n${ABSENT_FMT}\n・次番号:\n${NEXT_FMT}\n${URL}"
 
             curl -X POST -H 'Content-type: application/json' \
               --data "{ \"channel\": \"${CHANNEL}\", \"text\": \"${MESSAGE}\" }" \
