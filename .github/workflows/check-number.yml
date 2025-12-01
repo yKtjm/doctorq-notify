@@ -90,6 +90,7 @@ jobs:
         run: |
           while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
+            URL=$(echo "$SITE" | jq -r '.url')
             CHANGE_FLAG="results/${NAME}_changed.flag"
             [ -f "$CHANGE_FLAG" ] || continue
 
