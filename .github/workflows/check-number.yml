@@ -27,7 +27,8 @@ jobs:
           mkdir -p results pages
 
           # 全角 → 半角
-          z2h() { echo "$1" | tr '０１２３４５６７８９' '0123456789'; }
+          z2h() { echo "$1" | perl -CSD -pe 'tr/０-９/0-9/'; }
+          
           while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
