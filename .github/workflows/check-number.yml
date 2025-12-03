@@ -28,13 +28,13 @@ jobs:
 
           # 全角 → 半角
           z2h() { echo "$1" | perl -CSD -pe 'tr/０-９/0-9/'; }
-          
+
           while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
-            RULE_CURRENT=$(echo "$SITE" | jq -r '.rules.current')
-            RULE_ABSENT=$(echo "$SITE" | jq -r '.rules.absent')
-            RULE_NEXT=$(echo "$SITE" | jq -r '.rules.next')
+
+            # サイトごとのルールを動的に抽出
+            RULES=$(echo "$SITE" | jq -r '.rules')
 
             echo "[INFO] Processing $NAME ($URL)"
 
@@ -49,18 +49,12 @@ jobs:
               local INPUT="$2"
               local OUT=""
 
-              # grep を UTF-8 非依存に
               MATCHES=$(printf "%s" "$INPUT" | LC_ALL=C grep -oP "$RULE" || true)
 
               if [ -n "$MATCHES" ]; then
                 while IFS= read -r v; do
-
-                  # Perl UTF-8固定でキャプチャ抽出
                   VAL=$(printf "%s" "$v" | perl -CS -pe "s/${RULE}/\$1/")
-
-                  # 全角→半角
                   VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
-
                   OUT+="$VAL"$'\n'
                 done <<< "$MATCHES"
               fi
@@ -68,22 +62,22 @@ jobs:
               printf "%s" "$OUT"
             }
 
-            CURRENT=$(extract_matches "$RULE_CURRENT" "$TEXT")
-            ABSENT=$(extract_matches "$RULE_ABSENT" "$TEXT" | tr '、' ',')
-            NEXT=$(extract_matches "$RULE_NEXT" "$TEXT")
+            # 各ルールに対してマッチングを実行
+            RULE_MATCHES=""
+            while IFS="=" read -r RULE_NAME RULE_PATTERN; do
+              MATCH_RESULT=$(extract_matches "$RULE_PATTERN" "$TEXT")
+              if [ -n "$MATCH_RESULT" ]; then
+                RULE_MATCHES+="$RULE_NAME: $MATCH_RESULT"$'\n'
+              fi
+            done <<< "$(echo "$RULES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"')"
 
             # デバッグ出力
-            echo "[DEBUG][$NAME] CURRENT numbers:"
-            echo "$CURRENT"
-            echo "[DEBUG][$NAME] ABSENT numbers:"
-            echo "$ABSENT"
-            echo "[DEBUG][$NAME] NEXT numbers:"
-            echo "$NEXT"
+            echo "[DEBUG][$NAME] Matched rules:"
+            echo "$RULE_MATCHES"
 
             # JSON に保存
             NEW_STATE_FILE="results/${NAME}_state.json.new"
-            jq -n --arg c "$CURRENT" --arg a "$ABSENT" --arg n "$NEXT" \
-              '{current:$c, absent:$a, next:$n}' > "$NEW_STATE_FILE"
+            jq -n --arg r "$RULE_MATCHES" '{rules:$r}' > "$NEW_STATE_FILE"
 
             STATE_FILE="results/${NAME}_state.json"
             CHANGE_FLAG="results/${NAME}_changed.flag"
@@ -104,30 +98,19 @@ jobs:
             [ -f "$CHANGE_FLAG" ] || continue
 
             STATE_NEW="results/${NAME}_state.json.new"
-            CURRENT=$(jq -r '.current' "$STATE_NEW")
-            ABSENT=$(jq -r '.absent' "$STATE_NEW")
-            NEXT=$(jq -r '.next' "$STATE_NEW")
+            RULE_MATCHES=$(jq -r '.rules' "$STATE_NEW")
 
             # 全項目空なら通知しない
-            if [ -z "$CURRENT" ] && [ -z "$ABSENT" ] && [ -z "$NEXT" ]; then
-              echo "[INFO] Skip Slack: all values empty for $NAME"
+            if [ -z "$RULE_MATCHES" ]; then
+              echo "[INFO] Skip Slack: no matched rules for $NAME"
               continue
             fi
 
-            # 複数マッチを箇条書き形式
-            format_list() {
-              echo "$1" | sed '/^$/d' | sed 's/^/- /g'
-            }
-
-            CURRENT_FMT=$(format_list "$CURRENT")
-            ABSENT_FMT=$(format_list "$ABSENT")
-            NEXT_FMT=$(format_list "$NEXT")
-
-            CHANNEL="#${NAME}"
-            MESSAGE="*${NAME}*\n番号が更新されました\n・診療中:\n${CURRENT_FMT}\n・ご不在:\n${ABSENT_FMT}\n・次番号:\n${NEXT_FMT}\n${URL}"
+            # ルール名と値をコロン区切りで表示
+            MESSAGE="*${NAME}*\n番号が更新されました\n${RULE_MATCHES}\n${URL}"
 
             curl -X POST -H 'Content-type: application/json' \
-              --data "{ \"channel\": \"${CHANNEL}\", \"text\": \"${MESSAGE}\" }" \
+              --data "{ \"channel\": \"#${NAME}\", \"text\": \"${MESSAGE}\" }" \
               "${{ secrets.SLACK_WEBHOOK_URL }}"
 
           done < sites_list.txt
