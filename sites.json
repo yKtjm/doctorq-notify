@@ -12,9 +12,9 @@
     "name": "nakano-ent",
     "url": "https://ssc3.doctorqube.com/nakanoent/",
     "rules": {
-      "current": "診療中[[:space:]]*\\\\K[０-９0-9]+",
-      "absent": "ご不在の方[[:space:]]*\\\\K[０-９0-9,、[:space:]]+",
-      "next": "次にお取りできる番号[[:space:]]*\\\\K[０-９0-9]+"
+      "current": "診療中[[:space:]]*\\\\K[０-９0-9]+番",
+      "absent": "ご不在の方[[:space:]]*\\\\K[０-９0-9,、[:space:]番]+",
+      "next": "次にお取りできる番号[[:space:]]*\\\\K[０-９0-9]+番"
     }
   }
 ]
