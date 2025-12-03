@@ -48,15 +48,24 @@ jobs:
               local RULE="$1"
               local INPUT="$2"
               local OUT=""
-              MATCHES=$(echo "$INPUT" | grep -oP "$RULE" || true)
+
+              # grep を UTF-8 非依存に
+              MATCHES=$(printf "%s" "$INPUT" | LC_ALL=C grep -oP "$RULE" || true)
+
               if [ -n "$MATCHES" ]; then
-                while read -r v; do
-                  VAL=$(echo "$v" | perl -pe "s/$RULE/\$1/")
-                  VAL=$(z2h "$VAL")
+                while IFS= read -r v; do
+
+                  # Perl UTF-8固定でキャプチャ抽出
+                  VAL=$(printf "%s" "$v" | perl -CS -pe "s/${RULE}/\$1/")
+
+                  # 全角→半角
+                  VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
+
                   OUT+="$VAL"$'\n'
                 done <<< "$MATCHES"
               fi
-              echo "$OUT"
+
+              printf "%s" "$OUT"
             }
 
             CURRENT=$(extract_matches "$RULE_CURRENT" "$TEXT")
