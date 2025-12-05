@@ -67,7 +67,8 @@ jobs:
             while IFS="=" read -r RULE_NAME RULE_PATTERN; do
               MATCH_RESULT=$(extract_matches "$RULE_PATTERN" "$TEXT")
               if [ -n "$MATCH_RESULT" ]; then
-                RULE_MATCHES+="$RULE_NAME: $MATCH_RESULT"$'\n'
+                INDENTED=$(printf "%s" "$MATCH_RESULT" | sed 's/^/  - /')
+                RULE_MATCHES+="・$RULE_NAME:\n$INDENTED"$'\n'
               fi
             done <<< "$(echo "$RULES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"')"
 
