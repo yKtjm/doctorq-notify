@@ -48,17 +48,26 @@ jobs:
               local RULE="$1"
               local INPUT="$2"
               local OUT=""
-
               MATCHES=$(printf "%s" "$INPUT" | LC_ALL=C grep -oP "$RULE" || true)
-
+              # プレフィックスの定義（N 番目のマッチに対応）
+              PREFIXES=("午前：" "午後：" "その他：")
+              local index=0
               if [ -n "$MATCHES" ]; then
                 while IFS= read -r v; do
-                  VAL=$(printf "%s" "$v" | perl -CS -pe "s/${RULE}/\$1/")
-                  VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
-                  OUT+="$VAL"$'\n'
+                VAL=$(printf "%s" "$v" | perl -CS -pe "s/${RULE}/\$1/")
+                VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
+                # prefix を index に応じて決定
+                local prefix=""
+                if [ $index -lt ${#PREFIXES[@]} ]; then
+                  prefix="${PREFIXES[$index]}"
+                else
+                  prefix="その他："  # N 番目以降に付けたい場合
+                fi
+                # 1件ずつ prefix を付けて OUT に追加
+                OUT+="${prefix}${VAL}"$'\n'
+                index=$((index + 1))
                 done <<< "$MATCHES"
               fi
-
               printf "%s" "$OUT"
             }
 
