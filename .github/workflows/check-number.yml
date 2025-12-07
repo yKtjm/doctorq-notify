@@ -123,6 +123,11 @@ jobs:
               --data "{ \"channel\": \"#${NAME}\", \"text\": \"${MESSAGE}\" }" \
               "${{ secrets.SLACK_WEBHOOK_URL }}"
 
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              --data "{ \"text\": \"${MESSAGE}\" }" \
+              "${{ secrets.PHONE_HOOK_URL }}" 
+
           done < sites_list.txt
 
       - name: Save new states
