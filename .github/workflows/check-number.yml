@@ -29,43 +29,71 @@ jobs:
           # 全角 → 半角
           z2h() { echo "$1" | perl -CSD -pe 'tr/０-９/0-9/'; }
 
-          # ---- 午前/午後セクション検出 ----
-          annotate_section() {
-            local INPUT="$1"
-            local CURRENT_PREFIX=""
-            echo "$INPUT" | while IFS= read -r line; do
-              # セクション見出し検出（午前・午後）
-              if echo "$line" | grep -q '午前'; then
-                CURRENT_PREFIX="午前："
-              elif echo "$line" | grep -q '午後'; then
-                CURRENT_PREFIX="午後："
-              fi
-              printf "[%s]%s\n" "$CURRENT_PREFIX" "$line"
-            done
+          # ---- HTML 内の「午前/午後」見出しをマーカー化して改行を保持する ----
+          # 入力: raw HTML
+          # 出力: テキスト（各行の先頭に [午前：] または [午後：] が付く行がある）
+          annotate_section_from_html() {
+            local HTML="$1"
+
+            # 1) 見出し（角括弧内に「午前」/「午後」が含まれるもの）を行頭マーカーに置換
+            #    例: 【今日(1/1)の午後の順番】 -> \n[午後：]【今日(1/1)の午後の順番】\n
+            # 2) <br>, </p>, </div>, </li>, </tr>, </td> 等を改行に置換
+            # 3) タグを削除してテキスト化
+            printf "%s" "$HTML" \
+              | perl -0777 -pe '
+                  # 1. 見出しをマーカー化（括弧内部に「午前」または「午後」がある場合）
+                  s/【([^】]*?(午前)[^】]*)】/\n[午前：]【$1】\n/igs;
+                  s/【([^】]*?(午後)[^】]*)】/\n[午後：]【$1】\n/igs;
+
+                  # 2. ブロック要素を改行に（br と閉じタグの一部）
+                  s/<br\s*\/?>/\n/ig;
+                  s{</p>}{\n}ig;
+                  s{</div>}{\n}ig;
+                  s{</li>}{\n}ig;
+                  s{</tr>}{\n}ig;
+                  s{</td>}{\n}ig;
+
+                  # 3. タグを全て削除（残ったテキストを得る）
+                  s/<[^>]+>//g;
+
+                  # 4. 連続改行を一つにまとめ、行頭・行末の空白をトリム
+                  s/\r/\n/g;
+                  s/\n{2,}/\n/g;
+                  s/^[ \t]+//mg;
+                  s/[ \t]+$//mg;
+                '
+
           }
 
-          # ---- 正規表現マッチ（prefix をセクションから取得） ----
+          # ---- 正規表現マッチ（prefix を行頭のマーカーから取得） ----
+          # RULE はキャプチャ ( ) を使って値を取り出す前提
           extract_matches() {
             local RULE="$1"
             local INPUT="$2"
             local OUT=""
 
-            # 各行の prefix（午前/午後）を残した状態で RULE を検索する
+            # マッチした行を行番号つきで取得
             MATCH_LINES=$(printf "%s" "$INPUT" | grep -nP "$RULE" || true)
             if [ -n "$MATCH_LINES" ]; then
               while IFS= read -r ml; do
-                # 行番号と内容に分離
-                local ln=$(echo "$ml" | cut -d: -f1)
-                local line=$(echo "$ml" | cut -d: -f2-)
+                # 行番号:行内容
+                ln=$(echo "$ml" | cut -d: -f1)
+                line=$(echo "$ml" | cut -d: -f2-)
 
-                # prefix 抽出（ "[午前：]..." → "午前：" ）
-                local prefix=$(sed -n "${ln}p" <<< "$INPUT" | sed -E 's/^\[([^\]]*)\].*/\1/')
+                # その行の prefix を INPUT から取得（例: [午後：] の部分）
+                prefix=$(sed -n "${ln}p" <<< "$INPUT" | sed -E 's/^\[([^\]]*)\].*/\1/')
 
-                # 値抽出（() キャプチャを $1 として取り出す）
-                local VAL=$(printf "%s" "$line" | perl -CS -pe "s/${RULE}/\$1/")
+                # 値抽出（正規表現のキャプチャを $1 として取り出す）
+                VAL=$(printf "%s" "$line" | perl -CS -pe "s/${RULE}/\$1/")
+                # 全角数字を半角化
                 VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
 
-                OUT+="${prefix}${VAL}"$'\n'
+                # もし prefix が空文字（見出しマーカーが来ていない）なら空白を除去して prefix を空にする
+                if [ -z "$prefix" ] || [ "$prefix" = "" ]; then
+                  OUT+="${VAL}"$'\n'
+                else
+                  OUT+="${prefix}${VAL}"$'\n'
+                fi
               done <<< "$MATCH_LINES"
             fi
 
@@ -79,12 +107,12 @@ jobs:
 
             echo "[INFO] Processing $NAME ($URL)"
 
-            # HTML取得 & テキスト化
+            # HTML取得
             curl -s "$URL" > "pages/${NAME}.html"
-            TEXT_RAW=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
+            HTML_RAW=$(cat "pages/${NAME}.html")
 
-            # 🟦 午前/午後セクションで annotate
-            TEXT=$(annotate_section "$TEXT_RAW")
+            # annotate: HTML → テキスト（セクションマーカー保持）
+            TEXT=$(annotate_section_from_html "$HTML_RAW")
             echo "$TEXT" > "pages/${NAME}.txt"
 
             # ---- 各ルールに対してマッチング ----
