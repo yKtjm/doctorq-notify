@@ -29,49 +29,65 @@ jobs:
           # 全角 → 半角
           z2h() { echo "$1" | perl -CSD -pe 'tr/０-９/0-9/'; }
 
+          # ---- 午前/午後セクション検出 ----
+          annotate_section() {
+            local INPUT="$1"
+            local CURRENT_PREFIX=""
+            echo "$INPUT" | while IFS= read -r line; do
+              # セクション見出し検出（午前・午後）
+              if echo "$line" | grep -q '午前'; then
+                CURRENT_PREFIX="午前："
+              elif echo "$line" | grep -q '午後'; then
+                CURRENT_PREFIX="午後："
+              fi
+              printf "[%s]%s\n" "$CURRENT_PREFIX" "$line"
+            done
+          }
+
+          # ---- 正規表現マッチ（prefix をセクションから取得） ----
+          extract_matches() {
+            local RULE="$1"
+            local INPUT="$2"
+            local OUT=""
+
+            # 各行の prefix（午前/午後）を残した状態で RULE を検索する
+            MATCH_LINES=$(printf "%s" "$INPUT" | grep -nP "$RULE" || true)
+            if [ -n "$MATCH_LINES" ]; then
+              while IFS= read -r ml; do
+                # 行番号と内容に分離
+                local ln=$(echo "$ml" | cut -d: -f1)
+                local line=$(echo "$ml" | cut -d: -f2-)
+
+                # prefix 抽出（ "[午前：]..." → "午前：" ）
+                local prefix=$(sed -n "${ln}p" <<< "$INPUT" | sed -E 's/^\[([^\]]*)\].*/\1/')
+
+                # 値抽出（() キャプチャを $1 として取り出す）
+                local VAL=$(printf "%s" "$line" | perl -CS -pe "s/${RULE}/\$1/")
+                VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
+
+                OUT+="${prefix}${VAL}"$'\n'
+              done <<< "$MATCH_LINES"
+            fi
+
+            printf "%s" "$OUT"
+          }
+
           while read SITE; do
             NAME=$(echo "$SITE" | jq -r '.name')
             URL=$(echo "$SITE" | jq -r '.url')
-
-            # サイトごとのルールを動的に抽出
             RULES=$(echo "$SITE" | jq -r '.rules')
 
             echo "[INFO] Processing $NAME ($URL)"
 
             # HTML取得 & テキスト化
             curl -s "$URL" > "pages/${NAME}.html"
-            TEXT=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
+            TEXT_RAW=$(sed 's/<[^>]*>//g' "pages/${NAME}.html")
+
+            # 🟦 午前/午後セクションで annotate
+            TEXT=$(annotate_section "$TEXT_RAW")
             echo "$TEXT" > "pages/${NAME}.txt"
 
-            # ---- 複数マッチ抽出（安全版） ----
-            extract_matches() {
-              local RULE="$1"
-              local INPUT="$2"
-              local OUT=""
-              MATCHES=$(printf "%s" "$INPUT" | LC_ALL=C grep -oP "$RULE" || true)
-              # プレフィックスの定義（N 番目のマッチに対応）
-              PREFIXES=("午前：" "午後：" "その他：")
-              local index=0
-              if [ -n "$MATCHES" ]; then
-                while IFS= read -r v; do
-                VAL=$(printf "%s" "$v" | perl -CS -pe "s/${RULE}/\$1/")
-                VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
-                # prefix を index に応じて決定
-                local prefix=""
-                if [ $index -lt ${#PREFIXES[@]} ]; then
-                  prefix="${PREFIXES[$index]}"
-                else
-                  prefix="その他："  # N 番目以降に付けたい場合
-                fi
-                # 1件ずつ prefix を付けて OUT に追加
-                OUT+="${prefix}${VAL}"$'\n'
-                index=$((index + 1))
-                done <<< "$MATCHES"
-              fi
-              printf "%s" "$OUT"
-            }
-
-            # 各ルールに対してマッチングを実行
+            # ---- 各ルールに対してマッチング ----
             RULE_MATCHES=""
             while IFS="=" read -r RULE_NAME RULE_PATTERN; do
               MATCH_RESULT=$(extract_matches "$RULE_PATTERN" "$TEXT")
@@ -81,11 +97,10 @@ jobs:
               fi
             done <<< "$(echo "$RULES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"')"
 
-            # デバッグ出力
             echo "[DEBUG][$NAME] Matched rules:"
             echo "$RULE_MATCHES"
 
-            # JSON に保存
+            # JSONに保存（差分判定用）
             NEW_STATE_FILE="results/${NAME}_state.json.new"
             jq -n --arg r "$RULE_MATCHES" '{rules:$r}' > "$NEW_STATE_FILE"
 
