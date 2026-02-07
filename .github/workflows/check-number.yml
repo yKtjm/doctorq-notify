@@ -69,12 +69,7 @@ jobs:
                 # 行頭の [午前：] / [午後：] を取得
                 prefix=$(sed -n "${ln}p" <<< "$INPUT" | sed -E 's/^\[([^\]]*)\].*/\1/')
 
-                # ★FIX: 置換ではなく「マッチ部分そのもの」を取得
-                VAL=$(printf "%s" "$line" | perl -CS -ne "
-                  if (/$RULE/) {
-                    print \$&;
-                  }
-                ")
+                VAL=$(printf "%s" "$line" | grep -oP "$RULE" || true)
 
                 # 全角→半角
                 VAL=$(printf "%s" "$VAL" | perl -CS -pe 'tr/０-９/0-9/')
